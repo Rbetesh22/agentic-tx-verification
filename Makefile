@@ -50,9 +50,13 @@ node:
 	$(PYTHON) node.py --addr $(NODE_ADDR) --tracker $(TRACKER_ADDR)
 
 stop:
-	pkill -f "dashboard_server.py|node.py|tracker.py" || true
+	@echo "Stopping all processes..."
+	@pkill -TERM -f "dashboard_server.py|node.py|tracker.py" 2>/dev/null || true
 	@sleep 1
-	@echo "Processes stopped. Ports freed."
+	@lsof -nP -iTCP:8080-9004 -sTCP:LISTEN 2>/dev/null | awk 'NR>1 {print $$2}' | sort -u | xargs -r kill -9 2>/dev/null || true
+	@pkill -KILL -f "dashboard_server.py|node.py|tracker.py" 2>/dev/null || true
+	@sleep 1
+	@echo "✓ All processes terminated. Ports freed."
 
 clean:
 	rm -rf .pytest_cache __pycache__ tests/__pycache__
