@@ -1,6 +1,6 @@
 import time
 
-from allowance.block import (
+from block import (
     Block,
     compute_merkle_root,
     mine_block,

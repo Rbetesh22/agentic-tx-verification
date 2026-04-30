@@ -3,7 +3,7 @@ import json
 import time
 from dataclasses import dataclass
 
-from allowance.crypto_utils import verify
+from crypto_utils import verify
 
 # cleans up the transaction for signing 
 def tx_signable_payload(tx: dict) -> bytes:

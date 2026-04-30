@@ -16,7 +16,7 @@ def serialize_public_key(public_key):
         serialization.Encoding.X962,
         serialization.PublicFormat.CompressedPoint,
     )
-    return raw.hex()``
+    return raw.hex()
 
 
 def deserialize_public_key(hex_str):
