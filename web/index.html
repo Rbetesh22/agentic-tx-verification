@@ -1,49 +1,174 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Allowance Blockchain</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap"
-      rel="stylesheet"
-    />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shopping Agent</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="app">
+    <div class="container">
       <header>
-        <p class="kicker">Allowance Demo</p>
-        <h1>Simple Business Dashboard</h1>
-        <p class="sub">1. Start clean. 2. Run demo. 3. Review result.</p>
+        <h1>Shopping Agent</h1>
+        <p class="subtitle">
+          Set your budget and style. Your agent finds items. You approve
+          purchases.
+        </p>
       </header>
 
-      <section class="panel status">
-        <div><span>Chain height</span><strong id="chainLen">-</strong></div>
-        <div><span>Pending tx</span><strong id="pendingCount">-</strong></div>
-        <div><span>Consensus</span><strong id="consensus">-</strong></div>
-      </section>
+      <main>
+        <section>
+          <h2>Budget + Questionnaire</h2>
+          <div class="preferences-form">
+            <div class="form-group">
+              <label for="budgetInput">Budget ($)</label>
+              <input
+                type="number"
+                id="budgetInput"
+                value="200"
+                min="1"
+                step="0.01"
+              />
+            </div>
 
-      <section class="panel actions">
-        <button id="resetBtn" class="btn btn-ghost">Reset</button>
-        <button id="demoBtn" class="btn btn-solid">Run Business Demo</button>
-        <button id="mineBtn" class="btn btn-ghost">Mine Pending</button>
-        <p id="actionMsg"></p>
-      </section>
+            <div class="form-group">
+              <label for="periodSelect">Period</label>
+              <select id="periodSelect">
+                <option value="1">Daily</option>
+                <option value="7" selected>Weekly</option>
+                <option value="30">Monthly</option>
+                <option value="custom">Custom</option>
+              </select>
+              <input
+                type="number"
+                id="periodCustom"
+                placeholder="days"
+                min="1"
+                max="365"
+                style="display: none"
+              />
+            </div>
 
-      <section class="panel">
-        <h2>Agent Budgets</h2>
-        <div id="agentBudgets" class="budget-list"></div>
-      </section>
+            <div class="form-group">
+              <label for="styleSelect">Style</label>
+              <select id="styleSelect">
+                <option value="casual">Casual</option>
+                <option value="formal">Formal</option>
+              </select>
+            </div>
 
-      <section class="panel">
-        <h2>Recent Activity</h2>
-        <div id="events" class="event-feed"></div>
-      </section>
-    </main>
+            <div class="form-group">
+              <label for="sizeInput">Size</label>
+              <input
+                type="text"
+                id="sizeInput"
+                value="M"
+                placeholder="M / L / 32 / 10"
+              />
+            </div>
 
+            <div class="form-group form-wide">
+              <label for="occasionInput">Occasion (optional)</label>
+              <input
+                type="text"
+                id="occasionInput"
+                placeholder="office, weekend, date night"
+              />
+            </div>
+          </div>
+
+          <div class="cta-row">
+            <button
+              id="setBudgetBtn"
+              class="btn btn-secondary"
+              onclick="setBudget()"
+            >
+              Set Budget
+            </button>
+            <button
+              id="searchBtn"
+              class="btn btn-primary"
+              onclick="searchProducts()"
+            >
+              Find Items
+            </button>
+            <button id="mineBtn" class="btn btn-warning" onclick="mineBlock()">
+              Mine Block
+            </button>
+            <button
+              id="resetBtn"
+              class="btn btn-danger"
+              onclick="resetNetwork()"
+            >
+              Reset
+            </button>
+          </div>
+
+          <div class="budget-display">
+            <div class="stat">
+              <span class="label">Limit</span
+              ><span class="value" id="budgetLimit">$0.00</span>
+            </div>
+            <div class="stat">
+              <span class="label">Committed</span
+              ><span class="value" id="budgetSpent">$0.00</span>
+            </div>
+            <div class="stat">
+              <span class="label">Remaining</span
+              ><span class="value" id="budgetRemaining">$0.00</span>
+            </div>
+            <div class="stat">
+              <span class="label">Period</span
+              ><span class="value" id="periodDisplay">Weekly</span>
+            </div>
+          </div>
+
+          <div class="progress-section">
+            <div class="progress-bar">
+              <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div id="progressText" class="progress-text">0% used</div>
+          </div>
+        </section>
+
+        <section id="findingsSection" style="display: none">
+          <h2>Agent Recommendations</h2>
+          <div id="findingsList" class="findings-list"></div>
+        </section>
+
+        <section>
+          <h2>Approved Purchases</h2>
+          <div id="approvedList" class="approved-list">
+            <p class="empty-state">Nothing approved yet.</p>
+          </div>
+        </section>
+
+        <section>
+          <h2>Network</h2>
+          <div class="status-grid">
+            <div class="status-item">
+              <span class="status-label">Chain Height</span
+              ><span id="chainHeight" class="status-value">-</span>
+            </div>
+            <div class="status-item">
+              <span class="status-label">Pending Tx</span
+              ><span id="pendingCount" class="status-value">-</span>
+            </div>
+            <div class="status-item">
+              <span class="status-label">Consensus</span
+              ><span id="consensus" class="status-value">-</span>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2>Activity Feed</h2>
+          <div id="activityList" class="activity-list">
+            <p class="empty-state">No activity yet.</p>
+          </div>
+        </section>
+      </main>
+    </div>
     <script src="/app.js"></script>
   </body>
 </html>

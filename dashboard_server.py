@@ -13,10 +13,13 @@ from pathlib import Path
 from crypto_utils import generate_keypair, serialize_public_key
 from node import Node
 
+from shopping_agent import AGENT as SHOPPING_AGENT
+
 TRACKER_ADDR = "127.0.0.1:9000"
 PEER_ADDRS = ["127.0.0.1:9001", "127.0.0.1:9002", "127.0.0.1:9003", "127.0.0.1:9004"]
 DIFFICULTY = 8
 WEB_DIR = Path(__file__).parent / "web"
+
 
 
 class DemoNetwork:
@@ -24,11 +27,17 @@ class DemoNetwork:
         self.lock = threading.Lock()
         self.tracker_proc = None
         self.nodes = []
-        self.owner_priv = None
-        self.owner_hex = None
+        self.shopper_priv = None
+        self.shopper_hex = None
         self.merchant_hex = None
-        self.agents = []
+        self.budget = 0.0
         self.events = []
+
+        # Shopping workflow state
+        self.pending_findings = []  # Items found by agent, awaiting approval
+        self.approved_items = []    # Items approved by user
+        self.search_in_progress = False
+        self.last_preferences = None
 
     def log(self, text):
         self.events.append({"ts": time.time(), "text": text})
@@ -41,25 +50,27 @@ class DemoNetwork:
             self._init_keys_locked()
             self._start_tracker_locked()
             self._start_nodes_locked()
-            self.log("Network started: tracker + 4 nodes")
+            self.log("🚀 Shopping Agent ready: tracker + 4 nodes started")
 
     def stop(self):
         with self.lock:
             self._stop_locked()
 
     def _init_keys_locked(self):
-        owner_priv, owner_pub = generate_keypair()
-        self.owner_priv = owner_priv
-        self.owner_hex = serialize_public_key(owner_pub)
-
-        self.agents = []
-        for _ in range(3):
-            priv, pub = generate_keypair()
-            self.agents.append((priv, serialize_public_key(pub)))
+        shopper_priv, shopper_pub = generate_keypair()
+        self.shopper_priv = shopper_priv
+        self.shopper_hex = serialize_public_key(shopper_pub)
 
         _merchant_priv, merchant_pub = generate_keypair()
         self.merchant_hex = serialize_public_key(merchant_pub)
+        self.budget = 0.0
         self.events = []
+
+        # Reset shopping state
+        self.pending_findings = []
+        self.approved_items = []
+        self.search_in_progress = False
+        self.last_preferences = None
 
     def _start_tracker_locked(self):
         devnull = open(os.devnull, "w")
@@ -105,133 +116,165 @@ class DemoNetwork:
     def _node(self, idx=0):
         return self.nodes[idx]
 
-    def mandate(self, agent_index: int, max_amount: float, node_index: int = 0):
+    def set_budget(self, amount: float, period_days: int = None, node_index: int = 0):
+        """Set the shopper's budget (as a mandate transaction)."""
         with self.lock:
             if not self.nodes:
                 return False, "network not started"
-            if agent_index < 1 or agent_index > len(self.agents):
-                return False, "invalid agent"
-
-            agent_priv, agent_hex = self.agents[agent_index - 1]
+            self.budget = float(amount)
+            # determine period in days (default weekly)
+            period_days = int(period_days) if period_days is not None else getattr(self, "_last_period_days", 7)
+            self._last_period_days = period_days
+            period_seconds = int(period_days) * 24 * 3600
+            start_ts = time.time()
+            # create a mandate tx on behalf of the merchant with period metadata
             tx = self._node(node_index).create_mandate(
-                self.owner_priv,
-                self.owner_hex,
-                agent_hex,
-                float(max_amount),
+                self.shopper_priv,
+                self.shopper_hex,
+                self.shopper_hex,  # Mandate to self
+                float(amount),
+                period_seconds=period_seconds,
+                start_ts=start_ts,
             )
             accepted = self._node(node_index).submit_transaction(tx)
             if accepted:
-                self.log(f"Owner authorized Agent {agent_index} up to ${max_amount:.2f}")
-                return True, "mandate accepted"
-            self.log(f"Mandate rejected for Agent {agent_index}")
-            return False, "mandate rejected"
+                # Confirm the mandate immediately so budget enforcement/state update
+                # are visible before any approval attempts.
+                mined = self._node(node_index).mine()
+                self.log(f"💳 Budget set: ${amount:.2f} ({period_days}d)")
+                if mined is not None:
+                    self.log(f"⛓️ Mandate confirmed in block #{mined.index}")
+                return True, f"budget ${amount:.2f} approved"
+            self.log(f"💳 Budget set to ${amount:.2f} (pending)")
+            return True, f"budget ${amount:.2f} pending"
 
-    def spend(self, agent_index: int, amount: float, node_index: int = 0):
+
+    def search_products(self, budget: float, style: str, size: str, occasion: str = None) -> tuple[bool, str]:
+        """Agent searches for products matching user preferences."""
         with self.lock:
             if not self.nodes:
                 return False, "network not started"
-            if agent_index < 1 or agent_index > len(self.agents):
-                return False, "invalid agent"
-
-            agent_priv, agent_hex = self.agents[agent_index - 1]
-            tx = self._node(node_index).create_spend(
-                agent_priv,
-                agent_hex,
-                self.merchant_hex,
-                float(amount),
+            
+            self.search_in_progress = True
+            self.pending_findings = []
+            self.last_preferences = {
+                "budget": budget,
+                "style": style,
+                "size": size,
+                "occasion": occasion,
+            }
+            
+            # Agent searches
+            findings = SHOPPING_AGENT.search_products(
+                budget=budget,
+                style=style,
+                size=size,
+                occasion=occasion,
+                max_results=5,
             )
-            accepted = self._node(node_index).submit_transaction(tx)
-            if accepted:
-                self.log(f"Agent {agent_index} spend ${amount:.2f} accepted")
-                return True, "spend accepted"
-            self.log(f"Agent {agent_index} spend ${amount:.2f} rejected")
-            return False, "spend rejected"
+            
+            if not findings:
+                self.search_in_progress = False
+                self.log(f"🔍 Agent searched (${budget:.2f}, {style}) → No matches found")
+                return False, "no products match your preferences"
+            
+            # Store findings for approval
+            self.pending_findings = findings
+            self.search_in_progress = False
+            self.log(f"🔍 Agent searched (${budget:.2f}, {style}) → Found {len(findings)} items")
+            
+            return True, f"found {len(findings)} items for your approval"
 
+    def approve_purchase(self, product_idx: int) -> tuple[bool, str]:
+        """User approves an item for purchase."""
+        with self.lock:
+            if not self.nodes:
+                return False, "network not started"
+            
+            if not (0 <= product_idx < len(self.pending_findings)):
+                return False, "invalid product selection"
+            
+            product = self.pending_findings[product_idx]
+            price = float(product["price"])
+            
+            # Create spend transaction
+            tx = self._node(0).create_spend(
+                self.shopper_priv,
+                self.shopper_hex,
+                self.merchant_hex,
+                price,
+            )
+            
+            accepted = self._node(0).submit_transaction(tx)
+            if accepted:
+                self.approved_items.append(product)
+                self.log(f"✅ Approved: {product['name']} (${price:.2f}) from {product['brand']}")
+                return True, f"approved {product['name']}"
+            
+            # If rejected due to budget
+            self.log(f"❌ Rejected: {product['name']} (${price:.2f}) - budget limit")
+            return False, f"{product['name']} would exceed budget"
+
+    def reject_purchase(self, product_idx: int) -> tuple[bool, str]:
+        """User rejects an item (doesn't purchase)."""
+        with self.lock:
+            if not (0 <= product_idx < len(self.pending_findings)):
+                return False, "invalid product selection"
+            
+            product = self.pending_findings[product_idx]
+            self.log(f"👎 Rejected: {product['name']} from {product['brand']}")
+            return True, f"rejected {product['name']}"
     def mine(self, node_index: int = 0):
         with self.lock:
             if not self.nodes:
-                return False, "network not started"
+                return False, "nothing to mine"
             block = self._node(node_index).mine()
             if not block:
                 return False, "nothing to mine"
-            self.log(f"Node {node_index + 1} mined block #{block.index}")
-            return True, f"mined block #{block.index}"
+            tx_count = len(block.transactions)
+            self.log(f"⛏️ Block #{block.index} mined ({tx_count} tx)")
+            return True, f"block #{block.index} ({tx_count} tx)"
 
     def reset(self):
         self.start()
-        return True, "network reset"
+        return True, "reset complete"
 
-    def run_business_demo(self):
-        steps = [
-            ("mandate", 1, 500.0, 0),
-            ("mine", 0),
-            ("spend", 1, 200.0, 0),
-            ("mine", 0),
-            ("spend", 1, 250.0, 0),
-            ("mine", 0),
-            ("spend", 1, 100.0, 0),
-            ("spend", 1, 50.0, 0),
-            ("mine", 0),
-            ("mandate", 2, 300.0, 1),
-            ("mine", 1),
-            ("spend", 2, 150.0, 1),
-            ("mine", 1),
-        ]
-        results = []
-        with self.lock:
-            if not self.nodes:
-                return False, "network not started", []
 
-        for step in steps:
-            kind = step[0]
-            if kind == "mandate":
-                ok, msg = self.mandate(step[1], step[2], node_index=step[3])
-            elif kind == "spend":
-                ok, msg = self.spend(step[1], step[2], node_index=step[3])
-            else:
-                ok, msg = self.mine(node_index=step[1])
-            results.append({"step": step, "ok": ok, "msg": msg})
-            time.sleep(0.15)
+    def _build_shopper_state(self, chain, pending):
+        """Build state for the shopper's budget and purchases."""
+        limit = 0.0
+        spent_confirmed = 0.0
+        spent_pending = 0.0
+        purchases = []
 
-        return True, "demo sequence executed", results
-
-    def _build_agent_state(self, chain, pending):
-        agents = {}
-        for i, (_, agent_hex) in enumerate(self.agents, start=1):
-            agents[agent_hex] = {
-                "agent": i,
-                "pubkey": agent_hex,
-                "limit": 0.0,
-                "spent_confirmed": 0.0,
-                "spent_pending": 0.0,
-            }
-
+        # Track confirmed transactions
         for block in chain:
             for tx in block["transactions"]:
-                if tx.get("type") == "mandate":
-                    p = tx["agent_pubkey"]
-                    if p in agents:
-                        agents[p]["limit"] = float(tx["max_amount"])
-                        agents[p]["spent_confirmed"] = 0.0
-                elif tx.get("type") == "spend":
-                    p = tx["agent_pubkey"]
-                    if p in agents:
-                        agents[p]["spent_confirmed"] += float(tx["amount"])
+                if tx.get("type") == "mandate" and tx.get("agent_pubkey") == self.shopper_hex:
+                    limit = float(tx["max_amount"])
+                elif tx.get("type") == "spend" and tx.get("agent_pubkey") == self.shopper_hex:
+                    amt = float(tx["amount"])
+                    spent_confirmed += amt
+                    purchases.append({"amount": amt, "confirmed": True})
 
+        # Track pending purchases
         for tx in pending:
-            if tx.get("type") == "spend":
-                p = tx.get("agent_pubkey")
-                if p in agents:
-                    agents[p]["spent_pending"] += float(tx["amount"])
+            if tx.get("type") == "spend" and tx.get("agent_pubkey") == self.shopper_hex:
+                amt = float(tx["amount"])
+                spent_pending += amt
+                purchases.append({"amount": amt, "confirmed": False})
 
-        out = []
-        for agent in agents.values():
-            total = agent["spent_confirmed"] + agent["spent_pending"]
-            agent["remaining"] = max(agent["limit"] - total, 0.0)
-            agent["utilization"] = 0.0 if agent["limit"] <= 0 else min(total / agent["limit"], 1.0)
-            out.append(agent)
-        out.sort(key=lambda a: a["agent"])
-        return out
+        total = spent_confirmed + spent_pending
+        remaining = max(limit - total, 0.0)
+        return {
+            "budget": limit,
+            "spent": spent_confirmed,
+            "pending": spent_pending,
+            "total": total,
+            "remaining": remaining,
+            "utilization": 0.0 if limit <= 0 else min(total / limit, 1.0),
+            "purchases": purchases,
+        }
 
     def state(self):
         with self.lock:
@@ -240,6 +283,8 @@ class DemoNetwork:
                     "ready": False,
                     "message": "network offline",
                     "events": self.events,
+                                    "search_in_progress": False,
+                                    "pending_findings": [],
                 }
 
             node0 = self.nodes[0]
@@ -248,30 +293,44 @@ class DemoNetwork:
 
             tips = [n.bc.chain[-1].hash for n in self.nodes]
             consensus = len(set(tips)) == 1
-
-            summary_blocks = []
-            for block in chain:
-                txs = []
+            
+            # Build transaction log from blockchain
+            tx_events = []
+            for block_idx, block in enumerate(chain):
+                if block_idx == 0:
+                    continue  # Skip genesis block
+                block_ts = block.get("timestamp", time.time())
                 for tx in block["transactions"]:
-                    if tx["type"] == "mandate":
-                        txs.append({
-                            "type": "mandate",
-                            "agent": tx["agent_pubkey"][:10],
-                            "max_amount": float(tx["max_amount"]),
-                        })
-                    elif tx["type"] == "spend":
-                        txs.append({
-                            "type": "spend",
-                            "agent": tx["agent_pubkey"][:10],
-                            "amount": float(tx["amount"]),
-                        })
-                summary_blocks.append({
-                    "index": block["index"],
-                    "hash": block["hash"],
-                    "previous_hash": block["previous_hash"],
-                    "tx_count": len(block["transactions"]),
-                    "transactions": txs,
-                })
+                    tx_type = tx.get("type")
+                    if tx.get("agent_pubkey") == self.shopper_hex:
+                        if tx_type == "mandate":
+                            amt = float(tx.get("max_amount", 0))
+                            period = tx.get("period_seconds", 7 * 24 * 3600)
+                            period_days = period // (24 * 3600)
+                            tx_events.append({
+                                "ts": block_ts,
+                                "text": f"💳 Mandate: ${amt:.2f} ({period_days}d budget)",
+                            })
+                        elif tx_type == "spend":
+                            amt = float(tx.get("amount", 0))
+                            tx_events.append({
+                                "ts": block_ts,
+                                "text": f"🛍️ Spend: ${amt:.2f} confirmed on chain",
+                            })
+                
+                # Log block creation
+                if block_idx > 0:
+                    tx_count = len(block["transactions"])
+                    tx_events.append({
+                        "ts": block_ts,
+                        "text": f"⛓️ Block #{block_idx} confirmed ({tx_count} tx)",
+                    })
+            
+            # Combine transaction events with manual events, sorted by timestamp
+            combined_events = self.events + tx_events
+            combined_events.sort(key=lambda e: e.get("ts", 0))
+            # Keep only last 100 combined
+            combined_events = combined_events[-100:]
 
             return {
                 "ready": True,
@@ -279,19 +338,23 @@ class DemoNetwork:
                 "chain_length": len(chain),
                 "pending_count": len(pending),
                 "difficulty": node0.bc.difficulty,
+                "shopper": self._build_shopper_state(chain, pending),
                 "nodes": [
                     {
                         "addr": n.listen_addr,
                         "tip": n.bc.chain[-1].hash,
                         "height": n.bc.get_chain_length(),
-                        "peers_seen": len(n.peer.get_peer_list()),
                     }
                     for n in self.nodes
                 ],
-                "agents": self._build_agent_state(chain, pending),
-                "blocks": summary_blocks,
-                "events": self.events,
+                "events": combined_events,
+                # Include shopping state
+                "search_in_progress": self.search_in_progress,
+                "pending_findings": self.pending_findings,
+                "approved_items": self.approved_items,
+                "last_preferences": self.last_preferences,
             }
+
 
 
 NETWORK = DemoNetwork()
@@ -352,35 +415,43 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json(200, {"ok": ok, "msg": msg})
             return
         if action == "mine":
-            ok, msg = NETWORK.mine(node_index=int(data.get("node", 1)) - 1)
+            ok, msg = NETWORK.mine()
             self._json(200, {"ok": ok, "msg": msg})
             return
-        if action == "mandate":
-            ok, msg = NETWORK.mandate(
-                agent_index=int(data.get("agent", 1)),
-                max_amount=float(data.get("amount", 500)),
-                node_index=int(data.get("node", 1)) - 1,
-            )
+        if action == "set_budget":
+            amt = float(data.get("amount", 200))
+            period_days = data.get("period_days")
+            try:
+                pd = int(period_days) if period_days is not None else None
+            except Exception:
+                pd = None
+            ok, msg = NETWORK.set_budget(amt, period_days=pd)
             self._json(200, {"ok": ok, "msg": msg})
             return
-        if action == "spend":
-            ok, msg = NETWORK.spend(
-                agent_index=int(data.get("agent", 1)),
-                amount=float(data.get("amount", 100)),
-                node_index=int(data.get("node", 1)) - 1,
-            )
+        if action == "search":
+            budget = float(data.get("budget", 200))
+            style = data.get("style", "casual")
+            size = data.get("size", "M")
+            occasion = data.get("occasion")
+            ok, msg = NETWORK.search_products(budget, style, size, occasion)
             self._json(200, {"ok": ok, "msg": msg})
             return
-        if action == "run_demo":
-            ok, msg, results = NETWORK.run_business_demo()
-            self._json(200, {"ok": ok, "msg": msg, "results": results})
+        if action == "approve":
+            product_idx = int(data.get("product_idx", 0))
+            ok, msg = NETWORK.approve_purchase(product_idx)
+            self._json(200, {"ok": ok, "msg": msg})
+            return
+        if action == "reject":
+            product_idx = int(data.get("product_idx", 0))
+            ok, msg = NETWORK.reject_purchase(product_idx)
+            self._json(200, {"ok": ok, "msg": msg})
             return
 
         self._json(400, {"ok": False, "error": "unknown action"})
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Allowance dashboard web server")
+    parser = argparse.ArgumentParser(description="Shopping Agent dashboard web server")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
