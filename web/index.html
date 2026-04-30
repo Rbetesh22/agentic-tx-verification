@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Allowance Blockchain</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header>
+        <p class="kicker">Allowance Demo</p>
+        <h1>Simple Business Dashboard</h1>
+        <p class="sub">1. Start clean. 2. Run demo. 3. Review result.</p>
+      </header>
+
+      <section class="panel status">
+        <div><span>Chain height</span><strong id="chainLen">-</strong></div>
+        <div><span>Pending tx</span><strong id="pendingCount">-</strong></div>
+        <div><span>Consensus</span><strong id="consensus">-</strong></div>
+      </section>
+
+      <section class="panel actions">
+        <button id="resetBtn" class="btn btn-ghost">Reset</button>
+        <button id="demoBtn" class="btn btn-solid">Run Business Demo</button>
+        <button id="mineBtn" class="btn btn-ghost">Mine Pending</button>
+        <p id="actionMsg"></p>
+      </section>
+
+      <section class="panel">
+        <h2>Agent Budgets</h2>
+        <div id="agentBudgets" class="budget-list"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Recent Activity</h2>
+        <div id="events" class="event-feed"></div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
