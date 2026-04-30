@@ -1,4 +1,4 @@
-# Allowance Blockchain
+# Allowance
 
 P2P blockchain that enforces AI agent spending limits approved by owners.
 
