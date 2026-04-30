@@ -3,7 +3,7 @@ TRACKER_PORT ?= 9000
 NODE_ADDR ?= 127.0.0.1:9001
 TRACKER_ADDR ?= 127.0.0.1:$(TRACKER_PORT)
 
-.PHONY: help setup install test testv test-network demo dashboard tracker node clean
+.PHONY: help setup install test testv test-network demo dashboard tracker node clean stop
 
 help:
 	@echo "Targets:"
@@ -16,6 +16,7 @@ help:
 	@echo "  make dashboard    - start web dashboard on http://127.0.0.1:8080"
 	@echo "  make tracker      - start tracker server"
 	@echo "  make node         - start node (override NODE_ADDR/TRACKER_ADDR)"
+	@echo "  make stop         - kill dashboard and all network processes"
 	@echo "  make clean        - remove cache artifacts"
 
 setup:
@@ -47,6 +48,11 @@ tracker:
 
 node:
 	$(PYTHON) node.py --addr $(NODE_ADDR) --tracker $(TRACKER_ADDR)
+
+stop:
+	pkill -f "dashboard_server.py|node.py|tracker.py" || true
+	@sleep 1
+	@echo "Processes stopped. Ports freed."
 
 clean:
 	rm -rf .pytest_cache __pycache__ tests/__pycache__
