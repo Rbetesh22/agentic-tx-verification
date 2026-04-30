@@ -118,13 +118,18 @@ class Node:
             })
             self._log(f"requested chain from {target}")
 
-    def create_mandate(self, owner_priv, owner_pub_hex, agent_pub_hex, max_amount):
+    def create_mandate(self, owner_priv, owner_pub_hex, agent_pub_hex, max_amount, period_seconds=None, start_ts=None):
         tx = {
             "type": "mandate",
             "owner_pubkey": owner_pub_hex,
             "agent_pubkey": agent_pub_hex,
             "max_amount": max_amount,
         }
+        # Optional time window for periodic budgets
+        if period_seconds is not None:
+            tx["period_seconds"] = int(period_seconds)
+        if start_ts is not None:
+            tx["start_ts"] = float(start_ts)
         tx["signature"] = sign(owner_priv, tx_signable_payload(tx))
         return tx
 
