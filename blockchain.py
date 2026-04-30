@@ -138,24 +138,51 @@ class Blockchain:
                     result = (tx, block.index)
         return result
 
-    def _total_spent(self, agent_pubkey: str, after_block: int = 0, chain: list[Block] | None = None, exclude_tx: dict | None = None) -> float:
+    def _total_spent(
+        self,
+        agent_pubkey: str,
+        after_block: int = 0,
+        chain: list[Block] | None = None,
+        exclude_tx: dict | None = None,
+        from_ts: float | None = None,
+        to_ts: float | None = None,
+    ) -> float:
+        """Sum spends for an agent so we can set weekly limits etc. If from_ts/to_ts are provided we use block timestamps to include only spends that fall inside that window...
+        """
         chain = chain if chain is not None else self.chain
         total = 0.0
+        if from_ts is not None and to_ts is not None:
+            for block in chain:
+                if block.timestamp < from_ts or block.timestamp >= to_ts:
+                    continue
+                for tx in block.transactions:
+                    if tx.get("type") == "spend" and tx.get("agent_pubkey") == agent_pubkey:
+                        if exclude_tx is not None and tx_id(tx) == tx_id(exclude_tx):
+                            continue
+                        total += float(tx["amount"])
+            return total
+
         for block in chain:
             if block.index <= after_block:
                 continue
             for tx in block.transactions:
                 if tx.get("type") == "spend" and tx.get("agent_pubkey") == agent_pubkey:
-                    if exclude_tx is not None and tx is exclude_tx:
+                    if exclude_tx is not None and tx_id(tx) == tx_id(exclude_tx):
                         continue
-                    total += tx["amount"]
+                    total += float(tx["amount"])
         return total
 
-    def _pending_spent(self, agent_pubkey: str) -> float:
+    def _pending_spent(self, agent_pubkey: str, from_ts: float | None = None, to_ts: float | None = None) -> float:
         total = 0.0
+        now = time.time()
+        within_window = True
+        if from_ts is not None and to_ts is not None:
+            within_window = (now >= from_ts and now < to_ts)
+        if not within_window:
+            return 0.0
         for tx in self.pending_transactions:
             if tx.get("type") == "spend" and tx.get("agent_pubkey") == agent_pubkey:
-                total += tx["amount"]
+                total += float(tx["amount"])
         return total
 
     def _validate_spend(self, tx: dict, chain: list[Block] | None = None) -> bool:
@@ -166,10 +193,42 @@ class Blockchain:
             return False
 
         mandate, mandate_block_idx = mandate_info
-        spent_on_chain = self._total_spent(tx["agent_pubkey"], after_block=mandate_block_idx, chain=chain, exclude_tx=tx)
+        if "period_seconds" in mandate and "start_ts" in mandate:
+            period = int(mandate["period_seconds"])
+            start = float(mandate["start_ts"])
+            spend_ts = None
+            target_id = tx_id(tx)
+            for block in chain:
+                for btx in block.transactions:
+                    if tx_id(btx) == target_id:
+                        spend_ts = block.timestamp
+                        break
+                if spend_ts is not None:
+                    break
+            if spend_ts is None:
+                spend_ts = time.time()
 
-        # also count pending spends to prevent over-commitment in the mempool
+            if spend_ts < start:
+                return False
+
+            # figure out which period window this tx falls into
+            n = int((spend_ts - start) // period)
+            window_start = start + n * period
+            window_end = window_start + period
+
+            spent_on_chain = self._total_spent(
+                tx["agent_pubkey"], chain=chain, exclude_tx=tx, from_ts=window_start, to_ts=window_end
+            )
+            if chain is self.chain:
+                spent_on_chain += self._pending_spent(tx["agent_pubkey"], from_ts=window_start, to_ts=window_end)
+
+            return spent_on_chain + float(tx["amount"]) <= float(mandate["max_amount"])
+
+        spent_on_chain = self._total_spent(
+            tx["agent_pubkey"], after_block=mandate_block_idx, chain=chain, exclude_tx=tx
+        )
+
         if chain is self.chain:
             spent_on_chain += self._pending_spent(tx["agent_pubkey"])
 
-        return spent_on_chain + tx["amount"] <= mandate["max_amount"]
+        return spent_on_chain + float(tx["amount"]) <= float(mandate["max_amount"])
