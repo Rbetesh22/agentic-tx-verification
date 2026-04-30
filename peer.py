@@ -51,6 +51,9 @@ class Peer:
         # registered message handlers: type_str -> callable(msg, sender_addr)
         self._handlers: dict[str, list] = {}
 
+        # extra REPL commands registered by callers: name -> (fn, help_line)
+        self._repl_extra: dict[str, tuple] = {}
+
         self._tracker_sock: socket.socket | None = None
         self._listen_sock:  socket.socket | None = None
         self._stopping = False
@@ -65,6 +68,13 @@ class Peer:
         fn receives (msg_dict, sender_addr) and runs on a network thread.
         """
         self._handlers.setdefault(msg_type, []).append(fn)
+
+    def register_repl_command(self, name: str, fn, help_line: str) -> None:
+        """Add a custom command to the interactive REPL.
+
+        fn(arg) is called with the rest of the line when the user types `name`.
+        """
+        self._repl_extra[name] = (fn, help_line)
 
     def _dispatch(self, msg: dict, sender_addr: str) -> None:
         """Route an incoming message to all registered handlers for its type.
@@ -330,6 +340,11 @@ class Peer:
                 print("  block <text>       — broadcast a debug BLOCK")
                 print("  send <addr> <text> — send a debug TX to one peer")
                 print("  quit               — leave and exit")
+                for _, (_, help_line) in self._repl_extra.items():
+                    print(f"  {help_line}")
+
+            elif cmd in self._repl_extra:
+                self._repl_extra[cmd][0](arg)
 
             elif cmd == "peers":
                 pl = self.get_peer_list()
