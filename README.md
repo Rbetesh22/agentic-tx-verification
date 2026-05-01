@@ -24,35 +24,28 @@ python node.py --addr 127.0.0.1:9001 --tracker 127.0.0.1:9000  # Start node
 
 - block.py — Block structure, Merkle tree, mining
 - blockchain.py — Ledger, validation, fork resolution
-- crypto_utils.py — ECDSA keypair, signing, verification
+- crypto_utils.py — key gen, signing, verification
 - peer.py — P2P networking, peer discovery
-- tracker.py — Peer registry
+- tracker.py — omnipotent peer tracker
 - node.py — Node (Peer + Blockchain), message handlers
 - messages.py — JSON message framing
-- demo.py — Live scenario: owner → agent → merchant spending
+- demo.py — Live scenario: owner -> agent -> merchant spending
 - dashboard_server.py — API + static dashboard server
-- web/ — Frontend UI (business workflow dashboard)
+- web/ - Frontend UI (business workflow dashboard)
 - tests/ — 106 unit/integration tests
 - DESIGN.md — Architecture
-- TESTING.md — Test descriptions
+- TESTING.md - Test descriptions
 
 ---
-
-## Acknowledgements
-
-- **cryptography:** Python cryptographic library (https://cryptography.io)
-  - Used for ECDSA key generation, signing, and verification in [crypto_utils.py](crypto_utils.py)
-  - Provides standard-compliant implementations of elliptic curve operations
-
 ### AI Assistance
 
-- GitHub Copilot was used for:
-  - Assistance in networking logic
+- GitHub Copilot used for:
+  - Assistance in networking and blockchain logic
   - Test generation in [tests/test\_\*.py](tests/)
   - frontend demo
   - Makefile
 
-## Limitations and next steps
+## Limitations / next steps
 
 ### Currently:
 
